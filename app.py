@@ -4,7 +4,8 @@ from flask import Flask, render_template, request, flash, redirect, session, g
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
-from forms import UserAddForm, LoginForm, MessageForm
+from helper import query_by_id
+from forms import UserAddForm, LoginForm, MessageForm, UserEditForm
 from models import db, connect_db, User, Message
 
 CURR_USER_KEY = 'curr_user'
@@ -19,7 +20,7 @@ app.config['SQLALCHEMY_DATABASE_URI'] = (
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SQLALCHEMY_ECHO'] = False
 app.config['DEBUG_TB_INTERCEPT_REDIRECTS'] = True
-app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', 'it's a secret')
+app.config['SECRET_KEY'] = os.environ.get('SECRET_KEY', "it's a secret")
 toolbar = DebugToolbarExtension(app)
 
 connect_db(app)
@@ -152,7 +153,9 @@ def users_show(user_id):
                 .order_by(Message.timestamp.desc())
                 .limit(100)
                 .all())
-    return render_template('users/show.html', user=user, messages=messages)
+    liked_messages = [message.id for message in g.user.likes]
+
+    return render_template('users/show.html', user=user, messages=messages, likes=liked_messages)
 
 
 @app.route('/users/<int:user_id>/following')
@@ -221,7 +224,7 @@ def profile():
     form = UserEditForm(obj=user)
 
     if form.validate_on_submit() == False:
-        return render_template('users/edit.html', form=form)
+        return render_template('users/edit.html', form=form, user_id=user.id)
     
     if User.authenticate(User, g.user.username, form.password.data):
         user.username = form.username.data
@@ -302,6 +305,40 @@ def messages_destroy(message_id):
 
     return redirect(f'/users/{g.user.id}')
 
+##############################################################################
+# Likes
+
+@app.route('/messages/<int:message_id>/like', methods=['POST'])
+def handle_like(message_id):
+
+    if not g.user:
+        flash('Access unauthorized.', 'danger')
+        return redirect('/')
+
+    message = query_by_id(Message, message_id)
+
+    if message in g.user.messages:
+        flash('Invalid action: view your messages on your profile', 'danger')
+        return redirect('/')
+
+    if message in g.user.likes:
+        g.user.likes.pop(g.user.likes.index(message))
+    else:
+        g.user.likes.append(message)
+    
+    db.session.commit()
+    return redirect('/')
+
+@app.route('/users/<int:user_id>/likes')
+def show_likes(user_id):
+    if not g.user:
+        flash('Access unauthorized.', 'danger')
+        return redirect('/')
+
+    user = query_by_id(User, user_id)
+
+    return render_template('likes.html', user=user, likes=user.likes)
+
 
 ##############################################################################
 # Homepage and error pages
@@ -325,7 +362,9 @@ def homepage():
                     .limit(100)
                     .all())
 
-        return render_template('home.html', messages=messages)
+        liked_messages = [message.id for message in g.user.likes]       
+
+        return render_template('home.html', messages=messages, likes=liked_messages)
 
     else:
         return render_template('home-anon.html')

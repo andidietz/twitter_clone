@@ -1,9 +1,8 @@
 {% extends 'base.html' %}
 {% block content %}
-{% for message in likes %}
     <div class='col-lg-6 col-md-8 col-sm-12'>
         <ul class='list-group' id='messages'>
-          {% for msg in messages %}
+          {% for msg in likes %}
             <li class='list-group-item'>
               <a href='/messages/{{ msg.id  }}' class='message-link'/>
               <a href='/users/{{ msg.user.id }}'>
@@ -14,7 +13,7 @@
                 <span class='text-muted'>{{ msg.timestamp.strftime('%d %B %Y') }}</span>
                 <p>{{ msg.text }}</p>
               </div>
-              <form method='POST' action='/users/add_like/{{ msg.id }}' id='messages-form'>
+              <form method='POST' action='/users/{{ msg.id }}/like' id='messages-form'>
                 <button class='
                   btn 
                   btn-sm 
@@ -27,6 +26,4 @@
           {% endfor %}
         </ul>
       </div>
-{% endfor %}
-
 {% endblock %}

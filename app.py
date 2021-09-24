@@ -1,6 +1,7 @@
 import os
+from re import M
 
-from flask import Flask, render_template, request, flash, redirect, session, g
+from flask import Flask, render_template, request, flash, redirect, session, g, abort
 from flask_debugtoolbar import DebugToolbarExtension
 from sqlalchemy.exc import IntegrityError
 
@@ -12,8 +13,6 @@ CURR_USER_KEY = 'curr_user'
 
 app = Flask(__name__)
 
-# Get DB_URI from environ variable (useful for production/testing) or,
-# if not set there, use development local db.
 app.config['SQLALCHEMY_DATABASE_URI'] = (
     os.environ.get('DATABASE_URL', 'postgresql:///warbler'))
 
@@ -28,7 +27,6 @@ connect_db(app)
 
 ##############################################################################
 # User signup/login/logout
-
 
 @app.before_request
 def add_user_to_g():
@@ -50,7 +48,6 @@ def do_logout():
 
     if CURR_USER_KEY in session:
         del session[CURR_USER_KEY]
-
 
 
 @app.route('/signup', methods=['GET', 'POST'])
@@ -145,15 +142,13 @@ def users_show(user_id):
 
     user = User.query.get_or_404(user_id)
 
-    # snagging messages in order from the database;
-    # user.messages won't be in order by default
     messages = (Message
                 .query
                 .filter(Message.user_id == user_id)
                 .order_by(Message.timestamp.desc())
                 .limit(100)
                 .all())
-    liked_messages = [message.id for message in g.user.likes]
+    liked_messages = [message.id for message in user.likes]
 
     return render_template('users/show.html', user=user, messages=messages, likes=liked_messages)
 
@@ -226,11 +221,11 @@ def profile():
     if form.validate_on_submit() == False:
         return render_template('users/edit.html', form=form, user_id=user.id)
     
-    if User.authenticate(User, g.user.username, form.password.data):
+    if User.authenticate(g.user.username, form.password.data):
         user.username = form.username.data
         user.email = form.email.data
-        user.image_URL = form.image_URL.data
-        user.header_image_URL = form.header_image_URL.data
+        user.image_URL = form.image_url.data
+        user.header_image_URL = form.header_image_url.data
         user.bio = form.bio.data
 
         db.session.commit()
@@ -240,6 +235,7 @@ def profile():
     else:
         flash('Invalid password', 'danger')
         return redirect('/')
+
 
 @app.route('/users/delete', methods=['POST'])
 def delete_user():
@@ -305,44 +301,51 @@ def messages_destroy(message_id):
 
     return redirect(f'/users/{g.user.id}')
 
+
 ##############################################################################
 # Likes
 
-@app.route('/messages/<int:message_id>/like', methods=['POST'])
+@app.route('/users/<int:message_id>/like', methods=['POST'])
 def handle_like(message_id):
+    """Like and Unlike Message:
+    
+    If currently unliked, Like message. If currently liked, Unlike message
+    """
 
     if not g.user:
         flash('Access unauthorized.', 'danger')
         return redirect('/')
 
-    message = query_by_id(Message, message_id)
+    message = Message.query.get_or_404(message_id)
 
-    if message in g.user.messages:
-        flash('Invalid action: view your messages on your profile', 'danger')
+    if message.user_id == g.user.id:
+        flash('Access unauthorized.', 'danger')
         return redirect('/')
 
     if message in g.user.likes:
-        g.user.likes.pop(g.user.likes.index(message))
+        g.user.likes = [like for like in user_likes if like != message]
     else:
         g.user.likes.append(message)
     
     db.session.commit()
     return redirect('/')
 
+
 @app.route('/users/<int:user_id>/likes')
 def show_likes(user_id):
+    """Show page with user's liked messages"""
+
     if not g.user:
         flash('Access unauthorized.', 'danger')
         return redirect('/')
 
     user = query_by_id(User, user_id)
 
-    return render_template('likes.html', user=user, likes=user.likes)
+    return render_template('users/likes.html', user=user, likes=user.likes)
 
 
 ##############################################################################
 # Homepage and error pages
-
 
 @app.route('/')
 def homepage():
@@ -353,29 +356,22 @@ def homepage():
     """
 
     if g.user:
-        user_and_following_ids = [g.user.id] + [users.id for users in g.user.following]
-        
+        following_ids = [f.id for f in g.user.following] + [g.user.id]
+
         messages = (Message
                     .query
-                    .filter(Message.user_id.in_(user_and_following_ids))
+                    .filter(Message.user_id.in_(following_ids))
                     .order_by(Message.timestamp.desc())
                     .limit(100)
                     .all())
 
-        liked_messages = [message.id for message in g.user.likes]       
+        liked_msg_ids = [msg.id for msg in g.user.likes]
 
-        return render_template('home.html', messages=messages, likes=liked_messages)
+        return render_template('home.html', messages=messages, likes=liked_msg_ids)
 
     else:
         return render_template('home-anon.html')
 
-
-##############################################################################
-# Turn off all caching in Flask
-#   (useful for dev; in production, this kind of stuff is typically
-#   handled elsewhere)
-#
-# https://stackoverflow.com/questions/34066804/disabling-caching-in-flask
 
 @app.after_request
 def add_header(req):
